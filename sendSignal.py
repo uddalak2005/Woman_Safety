@@ -41,7 +41,7 @@ def get_location():
             return f"{g.latlng[0]}, {g.latlng[1]}"  # Return latitude, longitude
         return "Location unavailable"
     except Exception as e:
-        print(f"⚠️ Error getting location: {e}")
+        print(f"Error getting location: {e}")
         return "Location unavailable"
 
 def get_timestamp():
@@ -51,7 +51,7 @@ def get_timestamp():
 def send_alert():
     """Send alert with essential incident details"""
     try:
-        print("🚀 Attempting to send alert...")
+        print("Attempting to send alert...")
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
         # Create alert message
@@ -65,9 +65,9 @@ def send_alert():
         # Convert to JSON and send
         message = json.dumps(alert_data).encode('utf-8')
         client_socket.sendto(message, (SECURITY_IP, ALERT_PORT))
-        print("🚨 Detailed alert sent to security system!")
+        print("Detailed alert sent to security system!")
     except Exception as e:
-        print(f"❌ Failed to send alert: {e}")
+        print(f"Failed to send alert: {e}")
     finally:
         client_socket.close()
 
@@ -75,7 +75,7 @@ def process_webcam(frame_interval=5, seq_length=10):
     cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
-        print("❌ Error: Cannot access webcam.")
+        print("Error: Cannot access webcam.")
         return
 
     frame_count = 0
@@ -84,7 +84,7 @@ def process_webcam(frame_interval=5, seq_length=10):
     while True:
         ret, frame = cap.read()
         if not ret:
-            print("❌ Error: Cannot read frame.")
+            print("Error: Cannot read frame.")
             break
 
         frame_count += 1
