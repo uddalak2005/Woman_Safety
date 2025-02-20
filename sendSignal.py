@@ -4,16 +4,18 @@ import cv2
 import numpy as np
 import socket
 import threading
+import time
+import json
+import geocoder
 
-# 🔹 Server Configuration
-SECURITY_IP = "127.0.0.1"  # Change this to your security system's IP
-ALERT_PORT = 9999  # Port for sending alert messages
-VIDEO_PORT = 5000  # Port for streaming video
+# Server Configuration
+SECURITY_IP = "127.0.0.1"
+ALERT_PORT = 9999
 
-# 🔹 Load trained YOLO model
+# Load trained YOLO model
 yolo_model = YOLO("runs/classify/train4/weights/best.pt")
 
-# 🔹 Load trained LSTM model
+# Load trained LSTM model
 class LSTMClassifier(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, output_dim):
         super(LSTMClassifier, self).__init__()
@@ -31,40 +33,46 @@ lstm_model = LSTMClassifier(input_dim=2, hidden_dim=128, num_layers=3, output_di
 lstm_model.load_state_dict(torch.load("lstm_fight_detection.pth", map_location=device))
 lstm_model.eval()
 
-# 🔹 Function to send an alert signal to the security system
-def send_alert():
+def get_location():
+    """Get location using browser's Geolocation API"""
     try:
-        print("🚀 Attempting to send alert...")  # Debug print
+        g = geocoder.ip('me')
+        if g.ok:
+            return f"{g.latlng[0]}, {g.latlng[1]}"  # Return latitude, longitude
+        return "Location unavailable"
+    except Exception as e:
+        print(f"⚠️ Error getting location: {e}")
+        return "Location unavailable"
+
+def get_timestamp():
+    """Get current timestamp"""
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+def send_alert():
+    """Send alert with essential incident details"""
+    try:
+        print("🚀 Attempting to send alert...")
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        client_socket.sendto(b"VIOLENCE DETECTED", (SECURITY_IP, ALERT_PORT))
-        print("🚨 Alert sent to security system!")
+        
+        # Create alert message
+        alert_data = {
+            "type": "VIOLENCE DETECTED",
+            "location": get_location(),
+            "timestamp": get_timestamp(),
+            "device_id": "CAM_MODULE_001"
+        }
+        
+        # Convert to JSON and send
+        message = json.dumps(alert_data).encode('utf-8')
+        client_socket.sendto(message, (SECURITY_IP, ALERT_PORT))
+        print("🚨 Detailed alert sent to security system!")
     except Exception as e:
         print(f"❌ Failed to send alert: {e}")
     finally:
-        if 'client_socket' in locals():
-            client_socket.close()
+        client_socket.close()
 
-
-# 🔹 Function to send live video stream to security system
-def send_video():
-    cap = cv2.VideoCapture(0)  # Open webcam
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_address = (SECURITY_IP, VIDEO_PORT)
-
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        # Encode frame as JPEG
-        _, buffer = cv2.imencode(".jpg", frame)
-        sock.sendto(buffer, server_address)
-
-    cap.release()
-
-# 🔹 Real-time video processing
 def process_webcam(frame_interval=5, seq_length=10):
-    cap = cv2.VideoCapture(0)  # Open webcam (use RTSP link for CCTV)
+    cap = cv2.VideoCapture(0)
     
     if not cap.isOpened():
         print("❌ Error: Cannot access webcam.")
@@ -76,43 +84,39 @@ def process_webcam(frame_interval=5, seq_length=10):
     while True:
         ret, frame = cap.read()
         if not ret:
+            print("❌ Error: Cannot read frame.")
             break
 
         frame_count += 1
 
         if frame_count % frame_interval == 0:
-            results = yolo_model(frame)  
-            fight_prob = results[0].probs.data.cpu().numpy()[0]  # Extract Fight probability
-            features.append([fight_prob, 1 - fight_prob])  # Fight, Non-Fight
+            results = yolo_model(frame)
+            if results and results[0].probs is not None:
+                fight_prob = results[0].probs.data.cpu().numpy()[0]
+                features.append([fight_prob, 1 - fight_prob])
 
-            if len(features) >= seq_length:
-                seq_features = np.array(features[-seq_length:])  # Take last `seq_length` features
-                seq_features = torch.tensor(seq_features, dtype=torch.float32).unsqueeze(0).to(device)
+                if len(features) >= seq_length:
+                    seq_features = np.array(features[-seq_length:])
+                    seq_features = torch.tensor(seq_features, dtype=torch.float32).unsqueeze(0).to(device)
 
-                with torch.no_grad():
-                    lstm_output = lstm_model(seq_features)
-                    predicted_class = torch.argmax(lstm_output, dim=1).cpu().numpy()[0]
+                    with torch.no_grad():
+                        lstm_output = lstm_model(seq_features)
+                        predicted_class = torch.argmax(lstm_output, dim=1).cpu().numpy()[0]
 
-                label = "Fight" if predicted_class == 1 else "Non-Fight"
-                color = (0, 0, 255) if predicted_class == 1 else (0, 255, 0)
+                    label = "Fight" if predicted_class == 1 else "Non-Fight"
+                    color = (0, 0, 255) if predicted_class == 1 else (0, 255, 0)
 
-                # Display prediction on frame
-                cv2.putText(frame, label, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                    cv2.putText(frame, label, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
 
-                # 🚨 Send alert and start video streaming if a fight is detected
-                if predicted_class == 1:
-                    threading.Thread(target=send_alert).start()
-                    threading.Thread(target=send_video).start()
+                    if predicted_class == 1:
+                        threading.Thread(target=send_alert).start()
 
-        # Show video feed
         cv2.imshow("Real-Time Fight Detection", frame)
 
-        # Press 'q' to exit
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     cap.release()
     cv2.destroyAllWindows()
 
-# 🚀 Run real-time detection
 process_webcam()
